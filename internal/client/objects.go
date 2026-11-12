@@ -142,7 +142,13 @@ func (c *Client) SetLANNetworkDHCPDNS(ctx context.Context, siteID, networkID, mo
 	dhcp["dhcpns"] = mode
 	if mode == "manual" {
 		dhcp["priDns"] = primary
-		dhcp["sndDns"] = secondary
+		// An empty secondary is rejected ("Invalid DHCP Name Server IP2");
+		// omit it instead.
+		if secondary != "" {
+			dhcp["sndDns"] = secondary
+		} else {
+			delete(dhcp, "sndDns")
+		}
 	} else {
 		delete(dhcp, "priDns")
 		delete(dhcp, "sndDns")
@@ -274,6 +280,14 @@ type TimeRangePeriod struct {
 	EndTimeM   int `json:"endTimeM"`
 }
 
+// Time-range day modes, as the controller UI encodes them.
+const (
+	DayModeEveryday = 0
+	DayModeWeekday  = 1
+	DayModeWeekend  = 2
+	DayModeCustom   = 3
+)
+
 // TimeRange is a time-range profile used by WLAN schedules and ACLs.
 type TimeRange struct {
 	ID       string            `json:"id,omitempty"`
@@ -331,6 +345,16 @@ func (c *Client) CreateTimeRange(ctx context.Context, siteID string, tr TimeRang
 		}
 	}
 	return nil, fmt.Errorf("time range %q was created but could not be read back", tr.Name)
+}
+
+// UpdateTimeRange edits a profile in place (PATCH, verified on 6.3.14.2)
+// and returns the stored object.
+func (c *Client) UpdateTimeRange(ctx context.Context, siteID, id string, tr TimeRange) (*TimeRange, error) {
+	tr.ID = ""
+	if err := c.Do(ctx, http.MethodPatch, sitePath(siteID, timeRangesPath+"/"+url.PathEscape(id)), tr, nil); err != nil {
+		return nil, err
+	}
+	return c.TimeRange(ctx, siteID, id)
 }
 
 // DeleteTimeRange deletes a profile.
@@ -602,8 +626,7 @@ func (c *Client) Group(ctx context.Context, siteID, id string) (*Group, error) {
 	return nil, &NotFoundError{What: fmt.Sprintf("group %q", id)}
 }
 
-// CreateGroup creates a group and returns it with its ID. The controller does
-// not support editing groups in place, so callers must replace them.
+// CreateGroup creates a group and returns it with its ID.
 func (c *Client) CreateGroup(ctx context.Context, siteID string, g Group) (*Group, error) {
 	g.ID = ""
 	if g.Type == 0 {
@@ -628,6 +651,19 @@ func (c *Client) CreateGroup(ctx context.Context, siteID string, g Group) (*Grou
 	return nil, fmt.Errorf("group %q was created but could not be read back", g.Name)
 }
 
+// UpdateGroup edits a group in place. The path includes the group type
+// (PATCH /groups/{type}/{id}, verified on 6.3.14.2); the type cannot change.
+func (c *Client) UpdateGroup(ctx context.Context, siteID, id string, g Group) (*Group, error) {
+	g.ID = ""
+	if g.Type == 0 {
+		g.PortList = nil
+	}
+	if err := c.Do(ctx, http.MethodPatch, sitePath(siteID, fmt.Sprintf("%s/%d/%s", groupsPath, g.Type, url.PathEscape(id))), g, nil); err != nil {
+		return nil, err
+	}
+	return c.Group(ctx, siteID, id)
+}
+
 // DeleteGroup deletes a group. The path includes the group type.
 func (c *Client) DeleteGroup(ctx context.Context, siteID string, groupType int, id string) error {
 	return c.Do(ctx, http.MethodDelete, sitePath(siteID, fmt.Sprintf("%s/%d/%s", groupsPath, groupType, url.PathEscape(id))), nil, nil)
@@ -650,7 +686,7 @@ func deepCopy(m map[string]any) map[string]any {
 }
 
 // idFromResult extracts an object ID from a create response, which may be a
-// bare string, {"id": ...}, or {"groupId": ...}.
+// bare string, {"id": ...}, {"groupId": ...} or {"profileId": ...}.
 func idFromResult(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -661,7 +697,7 @@ func idFromResult(raw json.RawMessage) string {
 	}
 	var m map[string]any
 	if json.Unmarshal(raw, &m) == nil {
-		for _, k := range []string{"id", "groupId"} {
+		for _, k := range []string{"id", "groupId", "profileId", "aclId", "networkId", "ssidId"} {
 			if v, ok := m[k].(string); ok && v != "" {
 				return v
 			}

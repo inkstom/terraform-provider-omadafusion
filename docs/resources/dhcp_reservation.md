@@ -31,7 +31,7 @@ resource "omadafusion_dhcp_reservation" "printer" {
 ### Required
 
 - `ip` (String) Reserved IPv4 address. Must be inside the network's subnet.
-- `mac` (String) Client MAC address. `aa:bb:cc:dd:ee:ff` and `AA-BB-CC-DD-EE-FF` are both accepted.
+- `mac` (String) Client MAC address. `aa:bb:cc:dd:ee:ff` and `AA-BB-CC-DD-EE-FF` are both accepted and treated as equal.
 - `network_id` (String) LAN network ID, e.g. from `data.omadafusion_lan_network`.
 
 ### Optional

@@ -14,7 +14,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -118,7 +120,10 @@ func (r *gatewayACLResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					"`[\"new\"]` on a LAN-to-LAN deny makes it one-way: the source cannot open connections, but replies to connections opened by the other side still pass.",
 			},
 			"syslog": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Log matches to syslog."},
-			"index":  schema.Int64Attribute{Computed: true, Description: "1-based position in the gateway ACL table."},
+			"index": schema.Int64Attribute{
+				Computed: true, Description: "1-based position in the gateway ACL table.",
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -139,20 +144,18 @@ func (r *gatewayACLResource) ValidateConfig(ctx context.Context, req resource.Va
 		}
 	}
 	if !m.Protocols.IsUnknown() && !m.Protocols.IsNull() {
-		var ps []string
-		resp.Diagnostics.Append(m.Protocols.ElementsAs(ctx, &ps, true)...)
+		ps, allKnown := knownElements(m.Protocols.Elements())
 		for _, p := range ps {
 			if _, err := protoNumber(p); err != nil {
 				resp.Diagnostics.AddAttributeError(path.Root("protocols"), "Invalid protocol", err.Error())
 			}
 		}
-		if len(ps) == 0 {
+		if allKnown && len(ps) == 0 {
 			resp.Diagnostics.AddAttributeError(path.Root("protocols"), "No protocols", "at least one protocol is required")
 		}
 	}
 	if !m.MatchStates.IsUnknown() && !m.MatchStates.IsNull() {
-		var ss []string
-		resp.Diagnostics.Append(m.MatchStates.ElementsAs(ctx, &ss, true)...)
+		ss, _ := knownElements(m.MatchStates.Elements())
 		for _, s := range ss {
 			if i := sort.SearchStrings(validStates, s); i == len(validStates) || validStates[i] != s {
 				resp.Diagnostics.AddAttributeError(path.Root("match_states"), "Invalid state", fmt.Sprintf("%q is not one of new, established, related, invalid", s))
