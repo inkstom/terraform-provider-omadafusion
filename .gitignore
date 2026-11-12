@@ -1,0 +1,9 @@
+/terraform-provider-omadafusion
+/dist/
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+!examples/**/*.tfvars.example
+.env
