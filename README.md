@@ -25,6 +25,14 @@ It talks to the same web API (`/{omadacId}/api/v2`) that the controller's own we
 | Resource | `omadafusion_time_range` | Time-range profiles (every day, weekday, weekend or custom days), edited in place even while a schedule uses them. |
 | Resource | `omadafusion_ssid_schedule` | Attaches a schedule to an SSID, e.g. guest Wi-Fi off after hours. Destroy turns the schedule off. |
 | Resource | `omadafusion_lan_network_dhcp_dns` | DNS servers handed out by an existing network you don't otherwise manage. Destroy resets to the gateway. |
+| Resource | `omadafusion_wireguard` | WireGuard VPN interfaces on the gateway; the controller can generate the key pair. |
+| Resource | `omadafusion_wireguard_peer` | WireGuard peers: public key, allowed addresses, endpoint, keepalive. |
+| Resource | `omadafusion_ddns` | Dynamic DNS on a WAN port (DynDNS, No-IP, PeanutHull, Comexe). |
+| Resource | `omadafusion_site_settings` | Site-wide settings: time zone, NTP, LEDs, firmware auto-upgrade, LLDP, mesh, band steering, fast roaming, alerts, remote syslog, device account, device SSH, UPnP, mDNS. Only the attributes you set are managed. |
+| Resource | `omadafusion_auto_backup` | Scheduled controller backups. Destroy turns auto backup off. |
+| Resource | `omadafusion_admin_user` | Local controller accounts with a role and site scope. |
+| Resource | `omadafusion_device` | Name, LED and AP radio settings (channel, width, power) of an adopted device. Destroy leaves the device alone. |
+| Resource | `omadafusion_reboot_schedule` | Scheduled device reboots. |
 | Data source | `omadafusion_controller` | Version and controller ID (`/api/info`, no login needed). |
 | Data source | `omadafusion_site` | Site lookup by name. |
 | Data source | `omadafusion_lan_network` | Network ID, VLAN, subnet and DHCP pool by name. |
@@ -34,9 +42,9 @@ It talks to the same web API (`/{omadacId}/api/v2`) that the controller's own we
 | Data source | `omadafusion_gateway_acls` | All gateway ACL rules in evaluation order. |
 | Data source | `omadafusion_devices` | Adopted gateways, switches and APs with connection status. |
 
-Settings resources (`omadafusion_ssid_schedule`, `omadafusion_lan_network_dhcp_dns`) change a few fields on an object the provider doesn't own. They read the full object, change only their fields, and send everything else back unchanged, because the controller rejects partial updates.
+Settings resources (`omadafusion_ssid_schedule`, `omadafusion_lan_network_dhcp_dns`, `omadafusion_site_settings`, `omadafusion_device`) change a few fields on an object the provider doesn't own. They read the full object, change only their fields, and send everything else back unchanged, because the controller rejects partial updates.
 
-Not covered yet: WPA-Enterprise and open/PPSK SSIDs, captive portals, VPN servers, dynamic DNS, per-port overrides, controller settings, switch/AP ACLs, and the newer per-device gateway ACL mode (`osg-acls`, which needs an Open API token).
+Not covered yet: first-boot setup and device adoption, WAN port configuration, WPA-Enterprise and open/PPSK SSIDs, captive portals, IPsec/OpenVPN, firmware upgrade schedules (the integrated controller answers `Operation forbidden`), per-port overrides, switch/AP ACLs, and the newer per-device gateway ACL mode (`osg-acls`, which needs an Open API token).
 
 ### Things the controller does that you should know
 
@@ -129,6 +137,10 @@ These were found on real hardware (Fusion 2.5G, controller 6.3.14.2). The provid
 - **DHCP reservations apply when the lease renews.** Rebooting an edge switch to force it also power-cycles PoE APs behind it.
 - **A time range in use by an SSID schedule can't be deleted.** If you change a time range that a schedule uses, remove or repoint the schedule in the same apply, or apply twice.
 - **Some settings restart the gateway**, not just the controller. Changing the portal hostname did on the test unit. Those settings are deliberately not in this provider yet.
+- **Auto-backup schedule changes are ignored while auto backup is off**, and a PUT that echoes the read-only `storageType` field (present once it is on) fails with `-1001`. The provider drops it.
+- **Remote syslog `host` can't be cleared** once set; an empty string is rejected and `null` is ignored. Disable syslog instead.
+- **Account passwords must mix letters, digits and a symbol** or creation fails with `-30105`. Deleting an account needs `forceDelete`; without it the controller says "General error".
+- **WireGuard, peer, dynamic DNS and reboot schedule edits are PUT**, while site settings and devices are PATCH. Site settings are patched one section at a time, and the `site` section must be sent complete.
 - **"Incompatible" device warnings** in the controller UI (802.1X, 6 GHz beacon control, emergency numbers, MLO) come from the site-wide template and are cosmetic when the feature is off. Nothing here can clear them.
 
 ## Testing
@@ -165,5 +177,6 @@ Run on 2026-11-11 against a bench-staged Fusion 2.5G v2.0 (controller 6.3.14.2, 
 | Create, update, refresh, out-of-band drift, repair and destroy for every resource | Pass |
 | Import of every new resource, then a zero-diff plan | Pass (static route `interface_id` must be re-set, see above) |
 | Editing a time range in place while an SSID schedule uses it | Pass |
+| VPN, DDNS, site settings, auto backup, admin accounts, device settings and reboot schedules: create, update, out-of-band drift, repair, import and destroy (second run, same day) | Pass. WireGuard, peers, DDNS and reboot schedules were created disabled; the test account's logins were checked before and after a password change. |
 
 Bugs found and fixed during validation: custom-day time ranges were stored with no days (the controller silently drops days that do not match its day mode); an empty secondary DNS was rejected; groups and time ranges were needlessly replaced instead of edited; ACL `index` showed as unknown on every update; validators rejected `for_each`/`count` values that are unknown during `validate`; a MAC written in another format forced replacement after import.

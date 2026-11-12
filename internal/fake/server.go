@@ -43,6 +43,7 @@ type Server struct {
 	Ports      map[string]map[string]any // "<mac>/<port>"
 	Forwards   map[string]map[string]any
 	Routes     map[string]map[string]any
+	Ops        *OpsState
 	// ExpireSessions makes the next authenticated call fail as expired.
 	ExpireSessions bool
 }
@@ -421,7 +422,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	default:
-		if !s.handleExt(w, r, path, site, body) {
+		if !s.handleExt(w, r, path, site, body) && !s.handleOps(w, r, path, site, body) {
 			reply(w, -1600, "Unsupported request path.", nil)
 		}
 		return

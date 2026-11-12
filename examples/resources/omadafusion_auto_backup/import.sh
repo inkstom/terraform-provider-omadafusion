@@ -1,0 +1,1 @@
+terraform import omadafusion_auto_backup.this auto_backup

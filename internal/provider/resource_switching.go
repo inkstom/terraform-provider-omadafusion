@@ -233,7 +233,7 @@ func (r *switchPortResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"site": siteAttribute(),
 			"switch_mac": schema.StringAttribute{
 				Required: true, CustomType: macType{}, Description: "Switch MAC, any common format.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				PlanModifiers: []planmodifier.String{macKeepState{}, stringplanmodifier.RequiresReplace()},
 			},
 			"port": schema.Int64Attribute{
 				Required: true, Description: "Port number.",

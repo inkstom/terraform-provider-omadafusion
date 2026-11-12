@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
@@ -67,3 +68,25 @@ func (v macValue) StringSemanticEquals(_ context.Context, newValuable basetypes.
 }
 
 func newMACValue(s string) macValue { return macValue{StringValue: basetypes.NewStringValue(s)} }
+
+// macKeepState is a plan modifier that keeps the prior MAC when the
+// configuration names the same address in another format. Semantic equality
+// alone does not stop Terraform from planning a change (and a replacement)
+// when, for example, an import stored "AA-BB-..." and the configuration says
+// "aa:bb:...". Put it before RequiresReplace.
+type macKeepState struct{}
+
+func (macKeepState) Description(context.Context) string {
+	return "Keeps the prior value when the configured MAC is the same address in another format."
+}
+
+func (m macKeepState) MarkdownDescription(ctx context.Context) string { return m.Description(ctx) }
+
+func (macKeepState) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.StateValue.IsNull() || req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+		return
+	}
+	if client.NormalizeMAC(req.StateValue.ValueString()) == client.NormalizeMAC(req.PlanValue.ValueString()) {
+		resp.PlanValue = req.StateValue
+	}
+}

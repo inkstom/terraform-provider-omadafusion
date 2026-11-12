@@ -169,6 +169,14 @@ func (p *omadaProvider) Resources(_ context.Context) []func() resource.Resource 
 		newStaticRouteResource,
 		newWirelessNetworkResource,
 		newGatewayACLOrderResource,
+		newWireGuardResource,
+		newWireGuardPeerResource,
+		newDDNSResource,
+		newSiteSettingsResource,
+		newAutoBackupResource,
+		newAdminUserResource,
+		newDeviceResource,
+		newRebootScheduleResource,
 	}
 }
 
