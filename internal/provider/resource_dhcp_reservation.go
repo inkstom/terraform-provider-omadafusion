@@ -46,7 +46,7 @@ func (r *dhcpReservationResource) Schema(_ context.Context, _ resource.SchemaReq
 				Required:      true,
 				CustomType:    macType{},
 				Description:   "Client MAC address. `aa:bb:cc:dd:ee:ff` and `AA-BB-CC-DD-EE-FF` are both accepted and treated as equal.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				PlanModifiers: []planmodifier.String{macKeepState{}, stringplanmodifier.RequiresReplace()},
 			},
 			"ip":         schema.StringAttribute{Required: true, Description: "Reserved IPv4 address. Must be inside the network's subnet."},
 			"network_id": schema.StringAttribute{Required: true, Description: "LAN network ID, e.g. from `data.omadafusion_lan_network`."},
