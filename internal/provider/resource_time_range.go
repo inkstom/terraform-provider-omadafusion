@@ -92,8 +92,7 @@ func (r *timeRangeResource) ValidateConfig(ctx context.Context, req resource.Val
 		return
 	}
 	if !m.Days.IsUnknown() && !m.Days.IsNull() {
-		var days []string
-		resp.Diagnostics.Append(m.Days.ElementsAs(ctx, &days, false)...)
+		days, allKnown := knownElements(m.Days.Elements())
 		valid := map[string]bool{}
 		for _, d := range dayOrder {
 			valid[d] = true
@@ -103,7 +102,7 @@ func (r *timeRangeResource) ValidateConfig(ctx context.Context, req resource.Val
 				resp.Diagnostics.AddAttributeError(path.Root("days"), "Invalid day", fmt.Sprintf("%q is not one of mon, tue, wed, thu, fri, sat, sun", d))
 			}
 		}
-		if len(days) == 0 {
+		if allKnown && len(days) == 0 {
 			resp.Diagnostics.AddAttributeError(path.Root("days"), "No days", "at least one day is required")
 		}
 	}

@@ -39,6 +39,10 @@ type Server struct {
 	DHCP       map[string]map[string]any // keyed by MAC
 	ACLs       []map[string]any
 	Groups     map[string]map[string]any
+	Profiles   map[string]map[string]any
+	Ports      map[string]map[string]any // "<mac>/<port>"
+	Forwards   map[string]map[string]any
+	Routes     map[string]map[string]any
 	// ExpireSessions makes the next authenticated call fail as expired.
 	ExpireSessions bool
 }
@@ -52,6 +56,10 @@ func New() *Server {
 		TimeRanges: map[string]map[string]any{},
 		DHCP:       map[string]map[string]any{},
 		Groups:     map[string]map[string]any{},
+		Profiles:   map[string]map[string]any{},
+		Ports:      map[string]map[string]any{},
+		Forwards:   map[string]map[string]any{},
+		Routes:     map[string]map[string]any{},
 	}
 	s.seed()
 	s.Server = httptest.NewTLSServer(http.HandlerFunc(s.handle))
@@ -80,6 +88,7 @@ func (s *Server) seed() {
 		s.Networks[id] = n
 	}
 	add("Management", 1, "192.168.10.1/24", true)
+	defer s.seedSwitching()
 	add("Staff", 20, "192.168.20.1/24", false)
 	add("Guest", 40, "192.168.40.1/24", false)
 	for _, name := range []string{"Staff WiFi", "Guest WiFi"} {
@@ -217,6 +226,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			reply(w, -1001, "proto should not be null", nil)
 			return
 		}
+		if body["primary"] != true {
+			body["origName"] = body["name"]
+		}
 		s.Networks[id] = body
 
 	case path == site+"/setting/wlans" && r.Method == http.MethodGet:
@@ -230,7 +242,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			reply(w, -33000, "SSID does not exist.", nil)
 			return
 		}
-		if body["pskSetting"] == nil || body["name"] != cur["name"] {
+		if body["pskSetting"] == nil || body["name"] == nil || body["name"] == "" {
 			reply(w, -1001, "Invalid request parameters.", nil)
 			return
 		}
@@ -244,6 +256,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			delete(body, "action")
 		}
 		body["featureDescription"] = []any{}
+		body["id"], body["wlanId"] = id, WLANID
+		for k, v := range cur {
+			if _, has := body[k]; !has && (k == "idInt" || k == "site") {
+				body[k] = v
+			}
+		}
 		s.SSIDs[id] = body
 
 	case path == site+"/setting/profiles/timeranges" && r.Method == http.MethodGet:
@@ -403,7 +421,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 
 	default:
-		reply(w, -1600, "Unsupported request path.", nil)
+		if !s.handleExt(w, r, path, site, body) {
+			reply(w, -1600, "Unsupported request path.", nil)
+		}
 		return
 	}
 	if !wroteBody(w) {

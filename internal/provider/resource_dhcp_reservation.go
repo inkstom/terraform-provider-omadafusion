@@ -23,7 +23,7 @@ type dhcpReservationResource struct{ data *providerData }
 type dhcpReservationModel struct {
 	ID              types.String `tfsdk:"id"`
 	Site            types.String `tfsdk:"site"`
-	MAC             types.String `tfsdk:"mac"`
+	MAC             macValue     `tfsdk:"mac"`
 	IP              types.String `tfsdk:"ip"`
 	NetworkID       types.String `tfsdk:"network_id"`
 	Description     types.String `tfsdk:"description"`
@@ -44,7 +44,8 @@ func (r *dhcpReservationResource) Schema(_ context.Context, _ resource.SchemaReq
 			"site": siteAttribute(),
 			"mac": schema.StringAttribute{
 				Required:      true,
-				Description:   "Client MAC address. `aa:bb:cc:dd:ee:ff` and `AA-BB-CC-DD-EE-FF` are both accepted.",
+				CustomType:    macType{},
+				Description:   "Client MAC address. `aa:bb:cc:dd:ee:ff` and `AA-BB-CC-DD-EE-FF` are both accepted and treated as equal.",
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"ip":         schema.StringAttribute{Required: true, Description: "Reserved IPv4 address. Must be inside the network's subnet."},
@@ -81,7 +82,7 @@ func (m *dhcpReservationModel) fromAPI(x *client.DHCPReservation) {
 	norm := client.NormalizeMAC(x.MAC)
 	m.ID = types.StringValue(norm)
 	if m.MAC.IsNull() || client.NormalizeMAC(m.MAC.ValueString()) != norm {
-		m.MAC = types.StringValue(norm)
+		m.MAC = newMACValue(norm)
 	}
 	m.IP = types.StringValue(x.IP)
 	m.NetworkID = types.StringValue(x.NetID)

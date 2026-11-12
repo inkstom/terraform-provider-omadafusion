@@ -144,20 +144,18 @@ func (r *gatewayACLResource) ValidateConfig(ctx context.Context, req resource.Va
 		}
 	}
 	if !m.Protocols.IsUnknown() && !m.Protocols.IsNull() {
-		var ps []string
-		resp.Diagnostics.Append(m.Protocols.ElementsAs(ctx, &ps, true)...)
+		ps, allKnown := knownElements(m.Protocols.Elements())
 		for _, p := range ps {
 			if _, err := protoNumber(p); err != nil {
 				resp.Diagnostics.AddAttributeError(path.Root("protocols"), "Invalid protocol", err.Error())
 			}
 		}
-		if len(ps) == 0 {
+		if allKnown && len(ps) == 0 {
 			resp.Diagnostics.AddAttributeError(path.Root("protocols"), "No protocols", "at least one protocol is required")
 		}
 	}
 	if !m.MatchStates.IsUnknown() && !m.MatchStates.IsNull() {
-		var ss []string
-		resp.Diagnostics.Append(m.MatchStates.ElementsAs(ctx, &ss, true)...)
+		ss, _ := knownElements(m.MatchStates.Elements())
 		for _, s := range ss {
 			if i := sort.SearchStrings(validStates, s); i == len(validStates) || validStates[i] != s {
 				resp.Diagnostics.AddAttributeError(path.Root("match_states"), "Invalid state", fmt.Sprintf("%q is not one of new, established, related, invalid", s))

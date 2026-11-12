@@ -4,7 +4,7 @@ A Terraform/OpenTofu provider for TP-Link Omada controllers, built for the contr
 
 It talks to the same web API (`/{omadacId}/api/v2`) that the controller's own web UI uses and signs in with a **local controller account**. You don't need an Open API client, cloud binding or separate software controller. That matters on integrated gateways, where the UI session is often the only API path, and where several settings can only be changed through the UI API.
 
-> **Status: early (v0.x).** The provider is tested end to end with the Terraform CLI against an in-memory fake controller (see [Testing](#testing)). Every API call it makes was first worked out by hand against a real Omada Fusion 2.5G gateway (integrated controller 6.3.14.2, API 3). The provider binary itself has **not yet been run against real hardware**. Take a controller backup before your first apply, and please open an issue with your model and controller version if something doesn't match.
+> **Status: early (v0.x), validated on hardware.** Every resource and data source has been run end to end with the Terraform CLI against a real Omada Fusion 2.5G gateway (integrated controller 6.3.14.2, API 3) with adopted SG2428LP/SG2210P switches and EAP650/EAP723 APs: create, update, refresh, drift detection, import and destroy, followed by a check that the controller returned to its prior state. See [Hardware validation](#hardware-validation). Other models and controller versions are untested. Take a controller backup before your first apply, and please open an issue with your model and controller version if something doesn't match.
 >
 > Not affiliated with or endorsed by TP-Link. "Omada" is a TP-Link trademark.
 
@@ -12,21 +12,39 @@ It talks to the same web API (`/{omadacId}/api/v2`) that the controller's own we
 
 | Type | Name | Notes |
 |---|---|---|
-| Resource | `omadafusion_gateway_acl` | Gateway ACL rules (site ACL mode). Create, edit, delete, import. One-way LAN-to-LAN denies with `match_states = ["new"]`. |
-| Resource | `omadafusion_dhcp_reservation` | DHCP reservations, keyed by MAC. Create, edit, delete, import. |
-| Resource | `omadafusion_time_range` | Time-range profiles used by WLAN schedules. Changes replace the profile. |
-| Resource | `omadafusion_ssid_schedule` | Attaches a schedule to an existing SSID, e.g. guest Wi-Fi off after hours. Destroy turns the schedule off. |
-| Resource | `omadafusion_group` | IP groups and IP-port groups. The controller can't edit groups, so changes replace them. |
-| Resource | `omadafusion_lan_network_dhcp_dns` | DNS servers handed out by an existing network's DHCP server. Destroy resets to the gateway. |
+| Resource | `omadafusion_lan_network` | Gateway-served VLAN networks: subnet, DHCP pool, lease, DNS, isolation, IGMP snooping. Import the default network to manage it. |
+| Resource | `omadafusion_wireless_network` | WPA-Personal SSIDs: passphrase, bands, VLAN/network, broadcast, guest isolation, 802.11r. |
+| Resource | `omadafusion_port_profile` | Switch port profiles: native and tagged networks, STP, loopback detection, isolation, LLDP-MED, EEE, flow control. |
+| Resource | `omadafusion_switch_port` | Name and profile of one switch port, for building a jack map. Destroy resets to `Port<N>` / `All`. |
+| Resource | `omadafusion_gateway_acl` | Gateway ACL rules (site ACL mode). One-way LAN-to-LAN denies with `match_states = ["new"]`. |
+| Resource | `omadafusion_gateway_acl_order` | Enforces rule evaluation order; drift shows when rules are reordered or inserted above. |
+| Resource | `omadafusion_group` | IP groups and IP-port groups, edited in place. |
+| Resource | `omadafusion_dhcp_reservation` | DHCP reservations, keyed by MAC (any format). |
+| Resource | `omadafusion_port_forwarding` | NAT virtual servers, optionally limited to source networks. |
+| Resource | `omadafusion_static_route` | Next-hop static routes on the gateway. |
+| Resource | `omadafusion_time_range` | Time-range profiles (every day, weekday, weekend or custom days), edited in place even while a schedule uses them. |
+| Resource | `omadafusion_ssid_schedule` | Attaches a schedule to an SSID, e.g. guest Wi-Fi off after hours. Destroy turns the schedule off. |
+| Resource | `omadafusion_lan_network_dhcp_dns` | DNS servers handed out by an existing network you don't otherwise manage. Destroy resets to the gateway. |
 | Data source | `omadafusion_controller` | Version and controller ID (`/api/info`, no login needed). |
 | Data source | `omadafusion_site` | Site lookup by name. |
 | Data source | `omadafusion_lan_network` | Network ID, VLAN, subnet and DHCP pool by name. |
 | Data source | `omadafusion_ssid` | SSID and WLAN group IDs by name. Keys are never read into state. |
+| Data source | `omadafusion_port_profile` | Port profile by name, including the built-in `All` and `Disable`. |
+| Data source | `omadafusion_wan_ports` | Gateway port UUIDs for port forwarding and routes. |
+| Data source | `omadafusion_gateway_acls` | All gateway ACL rules in evaluation order. |
 | Data source | `omadafusion_devices` | Adopted gateways, switches and APs with connection status. |
 
 Settings resources (`omadafusion_ssid_schedule`, `omadafusion_lan_network_dhcp_dns`) change a few fields on an object the provider doesn't own. They read the full object, change only their fields, and send everything else back unchanged, because the controller rejects partial updates.
 
-Not covered yet: creating networks or SSIDs, port profiles, captive portals, controller settings, switch/AP ACLs, and the newer per-device gateway ACL mode (`osg-acls`, which needs an Open API token).
+Not covered yet: WPA-Enterprise and open/PPSK SSIDs, captive portals, VPN servers, dynamic DNS, per-port overrides, controller settings, switch/AP ACLs, and the newer per-device gateway ACL mode (`osg-acls`, which needs an Open API token).
+
+### Things the controller does that you should know
+
+- **Creating or changing an SSID re-provisions every AP** in the WLAN group, which briefly drops all SSIDs. If you run Terraform over Wi-Fi from the managed network, expect a few seconds of loss; the provider retries reads and logins on connection errors but does not retry writes.
+- **Creating a LAN network** also tags it on the built-in `All` port profile and creates an access profile with the same name. Deleting the network removes both.
+- **"Gateway management" as an ACL destination** (`destination_type = 5`) matches all traffic to the gateway, including DNS and DHCP. Use `protocols = ["tcp"]` to block only the admin pages.
+- **Static routes** do not return `interface_id` on read, so changes to it made in the UI are not detected.
+- **Wireless passphrases** are stored in Terraform state. Protect the state file.
 
 ## Quick start
 
@@ -135,3 +153,17 @@ go generate ./...   # regenerate docs/ with tfplugindocs
 ## License
 
 [MPL-2.0](LICENSE)
+
+## Hardware validation
+
+Run on 2026-11-11 against a bench-staged Fusion 2.5G v2.0 (controller 6.3.14.2, API 3, gateway firmware 1.0.10) with SG2428LP and SG2210P switches, three EAP650 v3 and two EAP723 v2 APs. A controller backup was taken first, and the controller's ACLs, reservations, networks, groups, time ranges, SSIDs, port profiles and port forwards were compared against a snapshot afterwards (no differences).
+
+| Check | Result |
+|---|---|
+| All data sources against the live site | Pass |
+| Import an existing production config (15 objects: ACLs, reservations, DNS, time range, SSID schedule) | Pass, zero-diff plan |
+| Create, update, refresh, out-of-band drift, repair and destroy for every resource | Pass |
+| Import of every new resource, then a zero-diff plan | Pass (static route `interface_id` must be re-set, see above) |
+| Editing a time range in place while an SSID schedule uses it | Pass |
+
+Bugs found and fixed during validation: custom-day time ranges were stored with no days (the controller silently drops days that do not match its day mode); an empty secondary DNS was rejected; groups and time ranges were needlessly replaced instead of edited; ACL `index` showed as unknown on every update; validators rejected `for_each`/`count` values that are unknown during `validate`; a MAC written in another format forced replacement after import.

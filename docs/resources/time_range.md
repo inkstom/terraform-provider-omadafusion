@@ -3,12 +3,12 @@
 page_title: "omadafusion_time_range Resource - omadafusion"
 subcategory: ""
 description: |-
-  A time-range profile (Profiles > Time Range). Used by WLAN schedules. The controller has no verified in-place edit for this object, so any change replaces it; a profile referenced by an SSID schedule must be detached before it can be replaced.
+  A time-range profile (Profiles > Time Range). Used by WLAN schedules and ACLs. Changes are applied in place, so a profile can be edited while an SSID schedule uses it. The controller's day mode is derived from days: all seven days is Every Day, mon-fri is Weekday, sat+sun is Weekend, and anything else is Customized with the same periods on each selected day.
 ---
 
 # omadafusion_time_range (Resource)
 
-A time-range profile (Profiles > Time Range). Used by WLAN schedules. The controller has no verified in-place edit for this object, so any change replaces it; a profile referenced by an SSID schedule must be detached before it can be replaced.
+A time-range profile (Profiles > Time Range). Used by WLAN schedules and ACLs. Changes are applied in place, so a profile can be edited while an SSID schedule uses it. The controller's day mode is derived from `days`: all seven days is Every Day, mon-fri is Weekday, sat+sun is Weekend, and anything else is Customized with the same periods on each selected day.
 
 ## Example Usage
 

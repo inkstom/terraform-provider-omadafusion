@@ -162,6 +162,13 @@ func (p *omadaProvider) Resources(_ context.Context) []func() resource.Resource 
 		newGroupResource,
 		newLANNetworkDHCPDNSResource,
 		newSSIDScheduleResource,
+		newLANNetworkResource,
+		newPortProfileResource,
+		newSwitchPortResource,
+		newPortForwardingResource,
+		newStaticRouteResource,
+		newWirelessNetworkResource,
+		newGatewayACLOrderResource,
 	}
 }
 
@@ -172,6 +179,9 @@ func (p *omadaProvider) DataSources(_ context.Context) []func() datasource.DataS
 		newLANNetworkDataSource,
 		newSSIDDataSource,
 		newDevicesDataSource,
+		newPortProfileDataSource,
+		newWANPortsDataSource,
+		newGatewayACLsDataSource,
 	}
 }
 

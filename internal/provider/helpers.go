@@ -2,7 +2,10 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+
 	"fmt"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -92,3 +95,73 @@ func listToStrings(ctx context.Context, l types.List, diags *diag.Diagnostics) [
 func pathRoot(name string) path.Path { return path.Root(name) }
 
 func isNotFound(err error) bool { return client.IsNotFound(err) }
+
+func remarshalAny(in, out any) error {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
+func deepCopyMap(m map[string]any) map[string]any {
+	var out map[string]any
+	_ = remarshalAny(m, &out)
+	return out
+}
+
+func stringsFromAny(v any) []string {
+	out := []string{}
+	if l, ok := v.([]any); ok {
+		for _, x := range l {
+			out = append(out, fmt.Sprint(x))
+		}
+	}
+	return out
+}
+
+func setToStrings(ctx context.Context, s types.Set, diags *diag.Diagnostics) []string {
+	out := []string{}
+	if s.IsNull() || s.IsUnknown() {
+		return out
+	}
+	diags.Append(s.ElementsAs(ctx, &out, false)...)
+	return out
+}
+
+func stringsToSet(ctx context.Context, in []string, diags *diag.Diagnostics) types.Set {
+	if in == nil {
+		in = []string{}
+	}
+	s, d := types.SetValueFrom(ctx, types.StringType, in)
+	diags.Append(d...)
+	return s
+}
+
+// siteFromState resolves the site for CRUD methods and reports errors.
+func (p *providerData) mustSite(ctx context.Context, site types.String, diags *diag.Diagnostics) (string, bool) {
+	id, err := p.siteID(ctx, site)
+	if err != nil {
+		apiError(diags, "resolving site", err)
+		return "", false
+	}
+	return id, true
+}
+
+// knownElements returns the known string elements of a list or set and
+// whether every element was known. Validators must skip unknown elements:
+// during validate, values such as for_each keys are still unknown and
+// ElementsAs would report them as "".
+func knownElements(elems []attr.Value) ([]string, bool) {
+	out := make([]string, 0, len(elems))
+	all := true
+	for _, e := range elems {
+		s, ok := e.(types.String)
+		if !ok || s.IsUnknown() || s.IsNull() {
+			all = false
+			continue
+		}
+		out = append(out, s.ValueString())
+	}
+	return out, all
+}

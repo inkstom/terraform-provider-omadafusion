@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -144,7 +145,22 @@ func (c *Client) infoLocked(ctx context.Context) (*ControllerInfo, error) {
 	return c.info, nil
 }
 
+// loginLocked logs in, retrying transport errors (an admin client on Wi-Fi
+// can lose connectivity for a few seconds while APs re-provision).
 func (c *Client) loginLocked(ctx context.Context) error {
+	err := c.loginOnceLocked(ctx)
+	for attempt := 1; err != nil && isTransportErr(err) && attempt <= 4; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
+		err = c.loginOnceLocked(ctx)
+	}
+	return err
+}
+
+func (c *Client) loginOnceLocked(ctx context.Context) error {
 	if _, err := c.infoLocked(ctx); err != nil {
 		return err
 	}
@@ -179,6 +195,17 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	c.mu.Unlock()
 
 	err := c.raw(ctx, method, full, body, out, true)
+	// Creating or editing SSIDs re-provisions APs, which can briefly drop a
+	// wireless admin client. Retry reads on transport errors only; writes are
+	// not retried because they may already have been applied.
+	for attempt := 1; err != nil && method == http.MethodGet && isTransportErr(err) && attempt <= 4; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		}
+		err = c.raw(ctx, method, full, body, out, true)
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && (reloginCodes[apiErr.Code] || apiErr.Status == http.StatusUnauthorized) {
 		c.mu.Lock()
@@ -248,6 +275,18 @@ func (c *Client) raw(ctx context.Context, method, path string, body, out any, au
 		}
 	}
 	return nil
+}
+
+// isTransportErr reports errors below the HTTP layer (connection refused,
+// reset, timeout), as opposed to controller replies.
+func isTransportErr(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	var nerr net.Error
+	var uerr *url.Error
+	return errors.As(err, &nerr) || errors.As(err, &uerr)
 }
 
 func snippet(b []byte) string {
