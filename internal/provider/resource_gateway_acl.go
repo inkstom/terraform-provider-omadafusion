@@ -14,7 +14,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -118,7 +120,10 @@ func (r *gatewayACLResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					"`[\"new\"]` on a LAN-to-LAN deny makes it one-way: the source cannot open connections, but replies to connections opened by the other side still pass.",
 			},
 			"syslog": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Log matches to syslog."},
-			"index":  schema.Int64Attribute{Computed: true, Description: "1-based position in the gateway ACL table."},
+			"index": schema.Int64Attribute{
+				Computed: true, Description: "1-based position in the gateway ACL table.",
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }

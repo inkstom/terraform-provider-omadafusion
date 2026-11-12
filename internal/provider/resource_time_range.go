@@ -12,10 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/inkstom/terraform-provider-omadafusion/internal/client"
@@ -55,27 +51,25 @@ func (r *timeRangeResource) Metadata(_ context.Context, req resource.MetadataReq
 
 func (r *timeRangeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A time-range profile (Profiles > Time Range). Used by WLAN schedules. " +
-			"The controller has no verified in-place edit for this object, so any change replaces it; " +
-			"a profile referenced by an SSID schedule must be detached before it can be replaced.",
+		Description: "A time-range profile (Profiles > Time Range). Used by WLAN schedules and ACLs. " +
+			"Changes are applied in place, so a profile can be edited while an SSID schedule uses it. " +
+			"The controller's day mode is derived from `days`: all seven days is Every Day, mon-fri is Weekday, " +
+			"sat+sun is Weekend, and anything else is Customized with the same periods on each selected day.",
 		Attributes: map[string]schema.Attribute{
 			"id":   idAttribute("Time range ID."),
 			"site": siteAttribute(),
 			"name": schema.StringAttribute{
-				Required:      true,
-				Description:   "Profile name. Must be unique in the site.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Required:    true,
+				Description: "Profile name. Must be unique in the site.",
 			},
 			"days": schema.SetAttribute{
-				Required:      true,
-				ElementType:   types.StringType,
-				Description:   "Days the periods apply to: any of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`.",
-				PlanModifiers: []planmodifier.Set{setplanmodifier.RequiresReplace()},
+				Required:    true,
+				ElementType: types.StringType,
+				Description: "Days the periods apply to: any of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`.",
 			},
 			"periods": schema.ListNestedAttribute{
-				Required:      true,
-				Description:   "On-intervals, in the site's time zone.",
-				PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplace()},
+				Required:    true,
+				Description: "On-intervals, in the site's time zone.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"start": schema.StringAttribute{Required: true, Description: "Start time, `HH:MM`."},
@@ -149,15 +143,42 @@ func (m *timeRangeModel) toAPI(ctx context.Context, diags *diag.Diagnostics) cli
 	var ps []periodModel
 	diags.Append(m.Periods.ElementsAs(ctx, &ps, false)...)
 	tr := client.TimeRange{
-		Name: m.Name.ValueString(), DayMode: 1,
+		Name:   m.Name.ValueString(),
 		DayMon: set["mon"], DayTue: set["tue"], DayWed: set["wed"], DayThu: set["thu"],
 		DayFri: set["fri"], DaySat: set["sat"], DaySun: set["sun"],
 	}
-	for _, p := range ps {
+	weekday := set["mon"] && set["tue"] && set["wed"] && set["thu"] && set["fri"]
+	weekend := set["sat"] && set["sun"]
+	// dayType 0 means "every selected day"; in Customized mode each entry
+	// names one day (1 = Monday ... 7 = Sunday). Weekday mode silently drops
+	// weekend flags and vice versa, so only use them for exact matches.
+	switch {
+	case len(set) == 7:
+		tr.DayMode = client.DayModeEveryday
+	case len(set) == 5 && weekday:
+		tr.DayMode = client.DayModeWeekday
+	case len(set) == 2 && weekend:
+		tr.DayMode = client.DayModeWeekend
+	default:
+		tr.DayMode = client.DayModeCustom
+	}
+	period := func(dayType int, p periodModel) client.TimeRangePeriod {
 		s, e := minutes(p.Start.ValueString()), minutes(p.End.ValueString())
-		tr.TimeList = append(tr.TimeList, client.TimeRangePeriod{
-			DayType: 0, StartTimeH: s / 60, StartTimeM: s % 60, EndTimeH: e / 60, EndTimeM: e % 60,
-		})
+		return client.TimeRangePeriod{DayType: dayType, StartTimeH: s / 60, StartTimeM: s % 60, EndTimeH: e / 60, EndTimeM: e % 60}
+	}
+	if tr.DayMode != client.DayModeCustom {
+		for _, p := range ps {
+			tr.TimeList = append(tr.TimeList, period(0, p))
+		}
+		return tr
+	}
+	for i, d := range dayOrder {
+		if !set[d] {
+			continue
+		}
+		for _, p := range ps {
+			tr.TimeList = append(tr.TimeList, period(i+1, p))
+		}
 	}
 	return tr
 }
@@ -166,6 +187,14 @@ func (m *timeRangeModel) fromAPI(ctx context.Context, tr *client.TimeRange, diag
 	m.ID = types.StringValue(tr.ID)
 	m.Name = types.StringValue(tr.Name)
 	flags := []bool{tr.DayMon, tr.DayTue, tr.DayWed, tr.DayThu, tr.DayFri, tr.DaySat, tr.DaySun}
+	switch tr.DayMode {
+	case client.DayModeEveryday:
+		flags = []bool{true, true, true, true, true, true, true}
+	case client.DayModeWeekday:
+		flags = []bool{true, true, true, true, true, false, false}
+	case client.DayModeWeekend:
+		flags = []bool{false, false, false, false, false, true, true}
+	}
 	days := []string{}
 	for i, on := range flags {
 		if on {
@@ -176,12 +205,17 @@ func (m *timeRangeModel) fromAPI(ctx context.Context, tr *client.TimeRange, diag
 	ds, d := types.SetValueFrom(ctx, types.StringType, days)
 	diags.Append(d...)
 	m.Days = ds
+	// In Customized mode the same periods are repeated per day; report the
+	// distinct periods in first-seen order.
 	periods := make([]periodModel, 0, len(tr.TimeList))
+	seen := map[string]bool{}
 	for _, t := range tr.TimeList {
-		periods = append(periods, periodModel{
-			Start: types.StringValue(fmt.Sprintf("%02d:%02d", t.StartTimeH, t.StartTimeM)),
-			End:   types.StringValue(fmt.Sprintf("%02d:%02d", t.EndTimeH, t.EndTimeM)),
-		})
+		s, e := fmt.Sprintf("%02d:%02d", t.StartTimeH, t.StartTimeM), fmt.Sprintf("%02d:%02d", t.EndTimeH, t.EndTimeM)
+		if seen[s+"-"+e] {
+			continue
+		}
+		seen[s+"-"+e] = true
+		periods = append(periods, periodModel{Start: types.StringValue(s), End: types.StringValue(e)})
 	}
 	pl, d := types.ListValueFrom(ctx, types.ObjectType{AttrTypes: periodAttrTypes}, periods)
 	diags.Append(d...)
@@ -212,7 +246,7 @@ func (r *timeRangeResource) Create(ctx context.Context, req resource.CreateReque
 		apiError(&resp.Diagnostics, "creating time range", err)
 		return
 	}
-	plan.ID = types.StringValue(created.ID)
+	plan.fromAPI(ctx, created, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -239,11 +273,32 @@ func (r *timeRangeResource) Read(ctx context.Context, req resource.ReadRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update is never called with changes because every attribute forces
-// replacement; it only persists the planned state.
 func (r *timeRangeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan timeRangeModel
+	if r.data == nil {
+		notConfigured(&resp.Diagnostics)
+		return
+	}
+	var plan, state timeRangeModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	siteID, err := r.data.siteID(ctx, plan.Site)
+	if err != nil {
+		apiError(&resp.Diagnostics, "resolving site", err)
+		return
+	}
+	tr := plan.toAPI(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	updated, err := r.data.client.UpdateTimeRange(ctx, siteID, state.ID.ValueString(), tr)
+	if err != nil {
+		apiError(&resp.Diagnostics, "updating time range", err)
+		return
+	}
+	plan.fromAPI(ctx, updated, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

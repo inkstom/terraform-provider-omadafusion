@@ -10,7 +10,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -58,7 +57,6 @@ func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"site": siteAttribute(),
 			"name": schema.StringAttribute{
 				Required: true, Description: "Group name.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"type": schema.StringAttribute{
 				Optional: true, Computed: true, Default: stringdefault.StaticString("ip"),
@@ -67,7 +65,7 @@ func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"subnets": schema.ListNestedAttribute{
 				Required: true, Description: "Members in CIDR form, e.g. `192.168.10.0/24` or `192.168.10.5/32`.",
-				PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplace()},
+
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"cidr":        schema.StringAttribute{Required: true, Description: "IPv4 address with prefix length."},
 					"description": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: "Member description."},
@@ -75,8 +73,7 @@ func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"ports": schema.ListAttribute{
 				Optional: true, ElementType: types.StringType,
-				Description:   "Ports or ranges (`\"22\"`, `\"8000-8100\"`). Required for `ip_port`, not allowed for `ip`.",
-				PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplace()},
+				Description: "Ports or ranges (`\"22\"`, `\"8000-8100\"`). Required for `ip_port`, not allowed for `ip`.",
 			},
 		},
 	}
@@ -218,8 +215,31 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 }
 
 func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan groupModel
+	if r.data == nil {
+		notConfigured(&resp.Diagnostics)
+		return
+	}
+	var plan, state groupModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	siteID, err := r.data.siteID(ctx, plan.Site)
+	if err != nil {
+		apiError(&resp.Diagnostics, "resolving site", err)
+		return
+	}
+	g := plan.toAPI(ctx, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	updated, err := r.data.client.UpdateGroup(ctx, siteID, state.ID.ValueString(), g)
+	if err != nil {
+		apiError(&resp.Diagnostics, "updating group", err)
+		return
+	}
+	plan.fromAPI(ctx, updated, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

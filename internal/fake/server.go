@@ -206,6 +206,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			reply(w, -33004, "The network does not exist.", nil)
 			return
 		}
+		if d, _ := body["dhcpSettings"].(map[string]any); d != nil {
+			if v, has := d["sndDns"]; has && v == "" {
+				reply(w, -1001, "Invalid DHCP Name Server IP2", nil)
+				return
+			}
+		}
 		v6, _ := body["lanNetworkIpv6Config"].(map[string]any)
 		if v6 == nil || v6["proto"] == nil {
 			reply(w, -1001, "proto should not be null", nil)
@@ -251,8 +257,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		id := s.nextID()
 		body["id"], body["site"], body["resource"] = id, SiteID, 0
+		normalizeDayMode(body)
 		s.TimeRanges[id] = body
-		ok(w, nil) // real controller: no ID in the create response
+		ok(w, map[string]any{"profileId": id}) // as 6.3.14.2 replies
+	case strings.HasPrefix(path, site+"/setting/profiles/timeranges/") && r.Method == http.MethodPatch:
+		id := strings.TrimPrefix(path, site+"/setting/profiles/timeranges/")
+		if _, found := s.TimeRanges[id]; !found {
+			reply(w, -33607, "The time range does not exist.", nil)
+			return
+		}
+		body["id"], body["site"], body["resource"] = id, SiteID, 0
+		normalizeDayMode(body)
+		s.TimeRanges[id] = body
 	case strings.HasPrefix(path, site+"/setting/profiles/timeranges/") && r.Method == http.MethodDelete:
 		id := strings.TrimPrefix(path, site+"/setting/profiles/timeranges/")
 		for _, ss := range s.SSIDs {
@@ -369,6 +385,19 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delete(s.Groups, parts[1])
+	case strings.HasPrefix(path, site+"/setting/profiles/groups/") && r.Method == http.MethodPatch:
+		parts := strings.Split(strings.TrimPrefix(path, site+"/setting/profiles/groups/"), "/")
+		if len(parts) != 2 {
+			reply(w, -1600, "Unsupported request path.", nil)
+			return
+		}
+		g, exists := s.Groups[parts[1]]
+		if !exists || fmt.Sprint(g["type"]) != parts[0] {
+			reply(w, -33400, "The group does not exist.", nil)
+			return
+		}
+		body["groupId"] = parts[1]
+		s.Groups[parts[1]] = body
 	case strings.HasPrefix(path, site+"/setting/profiles/groups/"):
 		reply(w, -1600, "Unsupported request path.", nil)
 		return
@@ -379,6 +408,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	if !wroteBody(w) {
 		ok(w, nil)
+	}
+}
+
+// normalizeDayMode mirrors the controller dropping day flags that do not
+// belong to the Weekday (1) or Weekend (2) modes.
+func normalizeDayMode(b map[string]any) {
+	mode, _ := b["dayMode"].(float64)
+	switch int(mode) {
+	case 1:
+		b["daySat"], b["daySun"] = false, false
+	case 2:
+		for _, d := range []string{"dayMon", "dayTue", "dayWed", "dayThu", "dayFri"} {
+			b[d] = false
+		}
 	}
 }
 
